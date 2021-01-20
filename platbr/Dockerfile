@@ -18,7 +18,7 @@ RUN curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -
     curl https://packages.microsoft.com/config/ubuntu/18.04/prod.list >  /etc/apt/sources.list.d/microsoft-prod.list && \
     chown root:root /etc/apt/trusted.gpg.d/microsoft.asc.gpg  /etc/apt/sources.list.d/microsoft-prod.list && \
     apt-get update && \
-    apt-get install -y dotnet-sdk-3.1 && \
+    apt-get install -y dotnet-sdk-5.0 && \
     rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && \
@@ -26,10 +26,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
-ARG BUILD_NUMBER="0.16.999"
+ARG BUILD_NUMBER="0.17.999"
 
 COPY . /build
-RUN dotnet publish src/Jackett.Server/Jackett.Server.csproj --configuration Release --runtime linux-x64 --self-contained --framework netcoreapp3.1 --output _artifacts/server /p:AssemblyVersion=${BUILD_NUMBER} /p:FileVersion=${BUILD_NUMBER} /p:InformationalVersion=${BUILD_NUMBER} /p:Version=${BUILD_NUMBER}
+RUN dotnet publish src/Jackett.Server/Jackett.Server.csproj --configuration Release --runtime linux-x64 --self-contained --framework net5.0 --output _artifacts/server /p:AssemblyVersion=${BUILD_NUMBER} /p:FileVersion=${BUILD_NUMBER} /p:InformationalVersion=${BUILD_NUMBER} /p:Version=${BUILD_NUMBER}
 
 FROM lsiobase/ubuntu:focal
 LABEL maintainer="platbr"
