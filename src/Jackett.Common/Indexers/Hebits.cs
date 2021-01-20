@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -16,6 +17,7 @@ using NLog;
 
 namespace Jackett.Common.Indexers
 {
+    [ExcludeFromCodeCoverage]
     public class Hebits : BaseWebIndexer
     {
         private string LoginPostUrl => SiteLink + "takeloginAjax.php";
@@ -27,30 +29,67 @@ namespace Jackett.Common.Indexers
             set => base.configData = value;
         }
 
-        public Hebits(IIndexerConfigurationService configService, Utils.Clients.WebClient wc, Logger l, IProtectionService ps)
-            : base(name: "Hebits",
+        public Hebits(IIndexerConfigurationService configService, Utils.Clients.WebClient wc, Logger l,
+            IProtectionService ps, ICacheService cs)
+            : base(id: "hebits",
+                   name: "Hebits",
                    description: "The Israeli Tracker",
                    link: "https://hebits.net/",
-                   caps: TorznabUtil.CreateDefaultTorznabTVCaps(),
+                   caps: new TorznabCapabilities
+                   {
+                       TvSearchParams = new List<TvSearchParam>
+                       {
+                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                       },
+                       MovieSearchParams = new List<MovieSearchParam>
+                       {
+                           MovieSearchParam.Q
+                       },
+                       MusicSearchParams = new List<MusicSearchParam>
+                       {
+                           MusicSearchParam.Q
+                       },
+                       BookSearchParams = new List<BookSearchParam>
+                       {
+                           BookSearchParam.Q
+                       }
+                   },
                    configService: configService,
                    client: wc,
                    logger: l,
                    p: ps,
+                   cacheService: cs,
                    downloadBase: "https://hebits.net/",
                    configData: new ConfigurationDataBasicLogin())
         {
             Encoding = Encoding.GetEncoding("windows-1255");
             Language = "he-il";
             Type = "private";
-            AddCategoryMapping(19, TorznabCatType.MoviesSD);
-            AddCategoryMapping(25, TorznabCatType.MoviesOther); // Israeli Content
-            AddCategoryMapping(20, TorznabCatType.MoviesDVD);
-            AddCategoryMapping(36, TorznabCatType.MoviesBluRay);
-            AddCategoryMapping(27, TorznabCatType.MoviesHD);
-            AddCategoryMapping(7, TorznabCatType.TVSD); // Israeli SDTV
-            AddCategoryMapping(24, TorznabCatType.TVSD); // English SDTV
-            AddCategoryMapping(1, TorznabCatType.TVHD); // Israel HDTV
-            AddCategoryMapping(37, TorznabCatType.TVHD); // Israel HDTV
+
+            AddCategoryMapping(21, TorznabCatType.PCGames, "משחקים - PC (PC Games)");
+            AddCategoryMapping(33, TorznabCatType.Console, "משחקים - קונסולות (Console Games)");
+            AddCategoryMapping(19, TorznabCatType.MoviesSD, "סרטי SD (Movies SD)");
+            AddCategoryMapping(25, TorznabCatType.MoviesOther, "סרטים ישראלי (Movies ISR)");
+            AddCategoryMapping(20, TorznabCatType.MoviesDVD, "סרטים - DVD-R (Movies DVD");
+            AddCategoryMapping(36, TorznabCatType.MoviesBluRay, "Bluray / Remux");
+            AddCategoryMapping(27, TorznabCatType.MoviesHD, "סרטי HD (Movies HD)");
+            AddCategoryMapping(34, TorznabCatType.Movies, "טופ IMDB (Top IMDB)");
+            AddCategoryMapping(7, TorznabCatType.TVSD, "סדרות ישראליות (TV SD ISR)");
+            AddCategoryMapping(24, TorznabCatType.TVSD, "סדרות לועזיות - עם תרגום מובנה (TV with subs)");
+            AddCategoryMapping(1, TorznabCatType.TVHD, "סדרות HD לועזיות (TV HD)");
+            AddCategoryMapping(37, TorznabCatType.TVHD, "סדרות HD ישראליות (TV HD ISR)");
+            AddCategoryMapping(23, TorznabCatType.TVAnime, "אנימציה - מצויירים (Anime)");
+            AddCategoryMapping(28, TorznabCatType.Audio, "מוזיקה לועזית (Music)");
+            AddCategoryMapping(6, TorznabCatType.Audio, "מוזיקה ישראלית (Music ISR)");
+            AddCategoryMapping(28, TorznabCatType.AudioLossless, "מוזיקה - Flac (Music Flac)");
+            AddCategoryMapping(35, TorznabCatType.AudioVideo, "הופעות (Music Concerts)");
+            AddCategoryMapping(30, TorznabCatType.Audio, "פסי קול (Music OST)");
+            AddCategoryMapping(32, TorznabCatType.PCMobileOther, "סלולאר (Mobile)");
+            AddCategoryMapping(26, TorznabCatType.Books, "ספרים (Books)");
+            AddCategoryMapping(22, TorznabCatType.PC, "תוכנות (Apps)");
+            AddCategoryMapping(29, TorznabCatType.Other, "שונות (Other)");
+            AddCategoryMapping(9, TorznabCatType.XXX, "פורנו XXX (3X)");
+            AddCategoryMapping(41, TorznabCatType.TVSport, "ספורט (Sport)");
         }
 
         public override async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
@@ -66,10 +105,10 @@ namespace Jackett.Common.Indexers
             CookieHeader = string.Empty;
             var result = await RequestLoginAndFollowRedirect(LoginPostUrl, pairs, CookieHeader, true, null, SiteLink);
             await ConfigureIfOK(
-                result.Cookies, result.Content?.Contains("OK") == true, () =>
+                result.Cookies, result.ContentString?.Contains("OK") == true, () =>
                 {
                     var parser = new HtmlParser();
-                    var dom = parser.ParseDocument(result.Content);
+                    var dom = parser.ParseDocument(result.ContentString);
                     var errorMessage = dom.TextContent.Trim();
                     errorMessage += " attempts left. Please check your credentials.";
                     throw new ExceptionWithConfigData(errorMessage, configData);
@@ -87,22 +126,25 @@ namespace Jackett.Common.Indexers
             var cats = MapTorznabCapsToTrackers(query);
             if (cats.Count > 0)
                 searchUrl = cats.Aggregate(searchUrl, (url, cat) => $"{url}&c{cat}=1");
-            var response = await RequestStringWithCookies(searchUrl);
+            var response = await RequestWithCookiesAsync(searchUrl);
             try
             {
                 var parser = new HtmlParser();
-                var dom = parser.ParseDocument(response.Content);
+                var dom = parser.ParseDocument(response.ContentString);
                 var rows = dom.QuerySelectorAll(".browse > div > div");
                 foreach (var row in rows)
                 {
                     var release = new ReleaseInfo();
-                    release.MinimumRatio = 1;
-                    release.MinimumSeedTime = 172800; // 48 hours
+                    release.MinimumRatio = 0.8;
+                    release.MinimumSeedTime = 259200; // 72 hours
+                    var qCatLink = row.QuerySelector("a[href^=\"browse.php?cat=\"]");
+                    var catStr = qCatLink.GetAttribute("href").Split('=')[1];
+                    release.Category = MapTrackerCatToNewznab(catStr);
                     var qTitle = row.QuerySelector(".bTitle");
                     var titleParts = qTitle.TextContent.Split('/');
                     release.Title = titleParts.Length >= 2 ? titleParts[1].Trim() : titleParts[0].Trim();
                     var qDetailsLink = qTitle.QuerySelector("a[href^=\"details.php\"]");
-                    release.Comments = new Uri(SiteLink + qDetailsLink.GetAttribute("href"));
+                    release.Details = new Uri(SiteLink + qDetailsLink.GetAttribute("href"));
                     release.Link = new Uri(SiteLink + row.QuerySelector("a[href^=\"download.php\"]").GetAttribute("href"));
                     release.Guid = release.Link;
                     var dateString = row.QuerySelector("div:last-child").TextContent.Trim();
@@ -129,7 +171,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(response.Content, ex);
+                OnParseError(response.ContentString, ex);
             }
 
             return releases;

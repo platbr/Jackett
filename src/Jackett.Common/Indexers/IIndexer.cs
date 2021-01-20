@@ -12,11 +12,13 @@ namespace Jackett.Common.Indexers
     {
         public IIndexer Indexer { get; set; }
         public IEnumerable<ReleaseInfo> Releases { get; set; }
+        public bool IsFromCache;
 
-        public IndexerResult(IIndexer Indexer, IEnumerable<ReleaseInfo> Releases)
+        public IndexerResult(IIndexer indexer, IEnumerable<ReleaseInfo> releases, bool isFromCache)
         {
-            this.Indexer = Indexer;
-            this.Releases = Releases;
+            Indexer = indexer;
+            Releases = releases;
+            IsFromCache = isFromCache;
         }
     }
 
@@ -30,7 +32,7 @@ namespace Jackett.Common.Indexers
         string Type { get; }
         string Language { get; }
         string LastError { get; set; }
-        string ID { get; }
+        string Id { get; }
         Encoding Encoding { get; }
 
         TorznabCapabilities TorznabCaps { get; }
@@ -51,7 +53,7 @@ namespace Jackett.Common.Indexers
 
         void Unconfigure();
 
-        Task<IndexerResult> ResultsForQuery(TorznabQuery query);
+        Task<IndexerResult> ResultsForQuery(TorznabQuery query, bool isMetaIndexer=false);
 
         bool CanHandleQuery(TorznabQuery query);
     }

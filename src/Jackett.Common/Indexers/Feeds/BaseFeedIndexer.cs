@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using Jackett.Common.Models;
 using Jackett.Common.Models.IndexerConfig;
@@ -10,11 +11,27 @@ using NLog;
 
 namespace Jackett.Common.Indexers.Feeds
 {
+    [ExcludeFromCodeCoverage]
     public abstract class BaseFeedIndexer : BaseWebIndexer
     {
         protected abstract Uri FeedUri { get; }
 
-        protected BaseFeedIndexer(string name, string link, string description, IIndexerConfigurationService configService, WebClient client, Logger logger, ConfigurationData configData, IProtectionService p, TorznabCapabilities caps = null, string downloadBase = null) : base(name, link, description, configService, client, logger, configData, p, caps, downloadBase)
+        protected BaseFeedIndexer(string link, string id, string name, string description,
+                                  IIndexerConfigurationService configService, WebClient client, Logger logger,
+                                  ConfigurationData configData, IProtectionService p, ICacheService cs,
+                                  TorznabCapabilities caps = null, string downloadBase = null)
+            : base(id: id,
+                   name: name,
+                   description: description,
+                   link: link,
+                   caps: caps,
+                   configService: configService,
+                   client: client,
+                   logger: logger,
+                   p: p,
+                   cacheService: cs,
+                   configData: configData,
+                   downloadBase: downloadBase)
         {
         }
 
@@ -39,9 +56,9 @@ namespace Jackett.Common.Indexers.Feeds
                 Type = RequestType.GET,
                 Encoding = Encoding
             };
-            var result = await webclient.GetString(request);
+            var result = await webclient.GetResultAsync(request);
 
-            var results = ParseFeedForResults(result.Content);
+            var results = ParseFeedForResults(result.ContentString);
 
             return results;
         }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Net;
@@ -19,7 +20,7 @@ using WebClient = Jackett.Common.Utils.Clients.WebClient;
 
 namespace Jackett.Common.Indexers
 {
-    // ReSharper disable once UnusedType.Global
+    [ExcludeFromCodeCoverage]
     public class MejorTorrent : BaseWebIndexer
     {
         private static class MejorTorrentCatType
@@ -34,42 +35,64 @@ namespace Jackett.Common.Indexers
         private const string NewTorrentsUrl = "secciones.php?sec=ultimos_torrents";
         private const string SearchUrl = "secciones.php";
 
-        public override string[] LegacySiteLinks { get; protected set; } = new string[] {
+        public override string[] LegacySiteLinks { get; protected set; } = {
+            "https://www.mejortorrentt.net/",
             "http://www.mejortorrent.org/",
             "http://www.mejortorrent.tv/",
             "http://www.mejortorrentt.com/",
             "https://www.mejortorrentt.org/",
             "http://www.mejortorrentt.org/",
+            "https://www.mejortorrents.net/"
         };
 
-        public MejorTorrent(IIndexerConfigurationService configService, WebClient w, Logger l, IProtectionService ps)
-            : base(name: "MejorTorrent",
-                description: "MejorTorrent - Hay veces que un torrent viene mejor! :)",
-                link: "https://www.mejortorrentt.net/",
-                caps: new TorznabCapabilities(),
-                configService: configService,
-                client: w,
-                logger: l,
-                p: ps,
-                configData: new ConfigurationData())
+        public MejorTorrent(IIndexerConfigurationService configService, WebClient w, Logger l, IProtectionService ps,
+            ICacheService cs)
+            : base(id: "mejortorrent",
+                   name: "MejorTorrent",
+                   description: "MejorTorrent - Hay veces que un torrent viene mejor! :)",
+                   link: "https://www.mejortorrents1.com/",
+                   caps: new TorznabCapabilities
+                   {
+                       TvSearchParams = new List<TvSearchParam>
+                       {
+                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                       },
+                       MovieSearchParams = new List<MovieSearchParam>
+                       {
+                           MovieSearchParam.Q
+                       },
+                       MusicSearchParams = new List<MusicSearchParam>
+                       {
+                           MusicSearchParam.Q
+                       }
+                   },
+                   configService: configService,
+                   client: w,
+                   logger: l,
+                   p: ps,
+                   cacheService: cs,
+                   configData: new ConfigurationData())
         {
             Encoding = Encoding.UTF8;
             Language = "es-es";
             Type = "public";
 
-            var matchWords = new BoolItem() { Name = "Match words in title", Value = true };
+            var matchWords = new BoolItem { Name = "Match words in title", Value = true };
             configData.AddDynamic("MatchWords", matchWords);
 
-            AddCategoryMapping(MejorTorrentCatType.Pelicula, TorznabCatType.Movies);
-            AddCategoryMapping(MejorTorrentCatType.Serie, TorznabCatType.TVSD);
-            AddCategoryMapping(MejorTorrentCatType.SerieHd, TorznabCatType.TVHD);
-            AddCategoryMapping(MejorTorrentCatType.Musica, TorznabCatType.Audio);
-            AddCategoryMapping(MejorTorrentCatType.Otro, TorznabCatType.Other);
+            configData.AddDynamic("flaresolverr", new DisplayItem("This site may use Cloudflare DDoS Protection, therefore Jackett requires <a href=\"https://github.com/Jackett/Jackett#configuring-flaresolverr\" target=\"_blank\">FlareSolver</a> to access it."){ Name = "FlareSolverr"});
+
+            AddCategoryMapping(MejorTorrentCatType.Pelicula, TorznabCatType.Movies, "Pelicula");
+            AddCategoryMapping(MejorTorrentCatType.Serie, TorznabCatType.TVSD, "Serie");
+            AddCategoryMapping(MejorTorrentCatType.SerieHd, TorznabCatType.TVHD, "Serie HD");
+            AddCategoryMapping(MejorTorrentCatType.Musica, TorznabCatType.Audio, "Musica");
+            // Other category is disabled because we have problems parsing documentaries
+            //AddCategoryMapping(MejorTorrentCatType.Otro, TorznabCatType.Other, "Otro");
         }
 
         public override async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
         {
-            configData.LoadValuesFromJson(configJson);
+            LoadValuesFromJson(configJson);
             var releases = await PerformQuery(new TorznabQuery());
 
             await ConfigureIfOK(string.Empty, releases.Any(), () =>
@@ -98,21 +121,32 @@ namespace Jackett.Common.Indexers
             var parser = new HtmlParser();
             var downloadUrl = link.ToString();
 
-            // Eg http://www.mejortorrentt.org/peli-descargar-torrent-11995-Harry-Potter-y-la-piedra-filosofal.html
-            var result = await RequestStringWithCookies(downloadUrl);
+            // Eg https://www.mejortorrentt.net/peli-descargar-torrent-11995-Harry-Potter-y-la-piedra-filosofal.html
+            var result = await RequestWithCookiesAsync(downloadUrl);
             if (result.Status != HttpStatusCode.OK)
-                throw new ExceptionWithConfigData(result.Content, configData);
-            var dom = parser.ParseDocument(result.Content);
+                throw new ExceptionWithConfigData(result.ContentString, configData);
+            var dom = parser.ParseDocument(result.ContentString);
             downloadUrl = SiteLink + dom.QuerySelector("a[href*=\"sec=descargas\"]").GetAttribute("href");
 
-            // Eg http://www.mejortorrentt.org/secciones.php?sec=descargas&ap=contar&tabla=peliculas&id=11995&link_bajar=1
-            result = await RequestStringWithCookies(downloadUrl);
+            // Eg https://www.mejortorrentt.net/secciones.php?sec=descargas&ap=contar&tabla=peliculas&id=11995&link_bajar=1
+            result = await RequestWithCookiesAsync(downloadUrl);
             if (result.Status != HttpStatusCode.OK)
-                throw new ExceptionWithConfigData(result.Content, configData);
-            dom = parser.ParseDocument(result.Content);
-            downloadUrl = SiteLink + dom.QuerySelector("a[href*=\".torrent\"]").GetAttribute("href").TrimStart('/');
+                throw new ExceptionWithConfigData(result.ContentString, configData);
+            dom = parser.ParseDocument(result.ContentString);
 
-            // Eg https://www.mejortorrentt.org/uploads/torrents/peliculas/Harry_Potter_1_y_la_Piedra_Filosofal_MicroHD_1080p.torrent
+            // There are several types of download links
+            // 1. Direct link https://www.mejortorrentt.net/tor/peliculas/Harry_Potter_1_y_la_Piedra_Filosofal_MicroHD_1080p.torrent
+            var selector = dom.QuerySelector("a[href^=\"/tor/\"]");
+            if (selector != null)
+                downloadUrl = SiteLink + selector.GetAttribute("href");
+            else
+            {
+                // 2. Hidden link onclick="post('https://cdn1.mejortorrents.net/torrents/xcceijidcd', {table: 'peliculas', name: 'Harry_Potter_1_y_la_Piedra_Filosofal_MicroHD_1080p.torrent'});"
+                var onClickParts = dom.QuerySelector("a[onclick*=\"/torrent\"]").GetAttribute("onclick").Split('\'');
+                downloadUrl = $"{SiteLink}tor/{onClickParts[3]}/{onClickParts[5]}";
+            }
+
+            // Eg https://www.mejortorrentt.net/tor/peliculas/Harry_Potter_1_y_la_Piedra_Filosofal_MicroHD_1080p.torrent
             var content = await base.Download(new Uri(downloadUrl));
             return content;
         }
@@ -121,18 +155,18 @@ namespace Jackett.Common.Indexers
         {
             var releases = new List<ReleaseInfo>();
             var url = SiteLink + NewTorrentsUrl;
-            var result = await RequestStringWithCookies(url);
+            var result = await RequestWithCookiesAsync(url);
             if (result.Status != HttpStatusCode.OK)
-                throw new ExceptionWithConfigData(result.Content, configData);
+                throw new ExceptionWithConfigData(result.ContentString, configData);
             try
             {
                 var searchResultParser = new HtmlParser();
-                var doc = searchResultParser.ParseDocument(result.Content);
+                var doc = searchResultParser.ParseDocument(result.ContentString);
 
                 var container = doc.QuerySelector("#main_table_center_center1 table div");
-                var parsedCommentsLink = new List<string>();
+                var parsedDetailsLink = new List<string>();
                 string rowTitle = null;
-                string rowCommentsLink = null;
+                string rowDetailsLink = null;
                 string rowPublishDate = null;
                 string rowQuality = null;
 
@@ -140,7 +174,7 @@ namespace Jackett.Common.Indexers
                     if (row.TagName.Equals("A"))
                     {
                         rowTitle = row.TextContent;
-                        rowCommentsLink = SiteLink + row.GetAttribute("href");
+                        rowDetailsLink = SiteLink + row.GetAttribute("href");
                     }
                     else if (rowPublishDate == null && row.TagName.Equals("SPAN"))
                         rowPublishDate = row.TextContent;
@@ -148,24 +182,24 @@ namespace Jackett.Common.Indexers
                         rowQuality = row.TextContent;
                     else if (row.TagName.Equals("BR"))
                     {
-                        // we add parsed items to parsedCommentsLink to avoid duplicates in newest torrents
+                        // we add parsed items to rowDetailsLink to avoid duplicates in newest torrents
                         // list results
-                        if (!parsedCommentsLink.Contains(rowCommentsLink))
+                        if (!parsedDetailsLink.Contains(rowDetailsLink))
                         {
-                            await ParseRelease(releases, rowTitle, rowCommentsLink, null,
+                            await ParseRelease(releases, rowTitle, rowDetailsLink, null,
                                 rowPublishDate, rowQuality, query, false);
-                            parsedCommentsLink.Add(rowCommentsLink);
+                            parsedDetailsLink.Add(rowDetailsLink);
                         }
                         // clean the current row
                         rowTitle = null;
-                        rowCommentsLink = null;
+                        rowDetailsLink = null;
                         rowPublishDate = null;
                         rowQuality = null;
                     }
             }
             catch (Exception ex)
             {
-                OnParseError(result.Content, ex);
+                OnParseError(result.ContentString, ex);
             }
 
             return releases;
@@ -178,14 +212,14 @@ namespace Jackett.Common.Indexers
             var searchTerm = GetLongestWord(query.SearchTerm);
             var qc = new NameValueCollection { { "sec", "buscador" }, { "valor", searchTerm } };
             var url = SiteLink + SearchUrl + "?" + qc.GetQueryString();
-            var result = await RequestStringWithCookies(url);
+            var result = await RequestWithCookiesAsync(url);
             if (result.Status != HttpStatusCode.OK)
-                throw new ExceptionWithConfigData(result.Content, configData);
+                throw new ExceptionWithConfigData(result.ContentString, configData);
 
             try
             {
                 var searchResultParser = new HtmlParser();
-                var doc = searchResultParser.ParseDocument(result.Content);
+                var doc = searchResultParser.ParseDocument(result.ContentString);
 
                 var table = doc.QuerySelector("#main_table_center_center2 table table");
                 // check the search term is valid
@@ -199,26 +233,26 @@ namespace Jackett.Common.Indexers
                         {
                             var link = row.QuerySelector("td a");
                             var rowTitle = link.TextContent;
-                            var rowCommentsLink = SiteLink + link.GetAttribute("href").TrimStart('/');
+                            var rowDetailsLink = SiteLink + link.GetAttribute("href").TrimStart('/');
                             var rowMejortorrentCat = row.QuerySelectorAll("td")[1].TextContent;
                             string rowQuality = null;
                             if (row.QuerySelector("td span") != null)
                                 rowQuality = row.QuerySelector("td span").TextContent;
 
-                            await ParseRelease(releases, rowTitle, rowCommentsLink, rowMejortorrentCat,
+                            await ParseRelease(releases, rowTitle, rowDetailsLink, rowMejortorrentCat,
                                 null, rowQuality, query, matchWords);
                         }
                 }
             }
             catch (Exception ex)
             {
-                OnParseError(result.Content, ex);
+                OnParseError(result.ContentString, ex);
             }
 
             return releases;
         }
 
-        private async Task ParseRelease(ICollection<ReleaseInfo> releases, string title, string commentsLink,
+        private async Task ParseRelease(ICollection<ReleaseInfo> releases, string title, string detailsStr,
             string mejortorrentCat, string publishStr, string quality, TorznabQuery query, bool matchWords)
         {
             // Remove trailing dot. Eg Harry Potter Y La Orden Del Fénix.
@@ -226,7 +260,10 @@ namespace Jackett.Common.Indexers
             if (title.EndsWith("."))
                 title = title.Remove(title.Length - 1).Trim();
 
-            var cat = GetMejortorrentCategory(mejortorrentCat, commentsLink, title);
+            var cat = GetMejortorrentCategory(mejortorrentCat, detailsStr, title);
+            if (cat == MejorTorrentCatType.Otro)
+                return; // skip releases from this category
+
             var categories = MapTrackerCatToNewznab(cat);
             var publishDate = TryToParseDate(publishStr, DateTime.Now);
 
@@ -240,29 +277,29 @@ namespace Jackett.Common.Indexers
 
             // parsing is different for each category
             if (cat == MejorTorrentCatType.Serie || cat == MejorTorrentCatType.SerieHd)
-                await ParseSeriesRelease(releases, query, title, commentsLink, cat, publishDate);
+                await ParseSeriesRelease(releases, query, title, detailsStr, cat, publishDate);
             else if (query.Episode == null) // if it's scene series, we don't return other categories
             {
                 if (cat == MejorTorrentCatType.Pelicula)
-                    ParseMovieRelease(releases, query, title, commentsLink, cat, publishDate, quality);
+                    ParseMovieRelease(releases, query, title, detailsStr, cat, publishDate, quality);
                 else
                 {
                     const long size = 104857600L; // 100 MB
-                    var release = GenerateRelease(title, commentsLink, commentsLink, cat, publishDate, size);
+                    var release = GenerateRelease(title, detailsStr, detailsStr, cat, publishDate, size);
                     releases.Add(release);
                 }
             }
         }
 
         private async Task ParseSeriesRelease(ICollection<ReleaseInfo> releases, TorznabQuery query, string title,
-            string commentsLink, string cat, DateTime publishDate)
+            string detailsStr, string cat, DateTime publishDate)
         {
-            var result = await RequestStringWithCookies(commentsLink);
+            var result = await RequestWithCookiesAsync(detailsStr);
             if (result.Status != HttpStatusCode.OK)
-                throw new ExceptionWithConfigData(result.Content, configData);
+                throw new ExceptionWithConfigData(result.ContentString, configData);
 
             var searchResultParser = new HtmlParser();
-            var doc = searchResultParser.ParseDocument(result.Content);
+            var doc = searchResultParser.ParseDocument(result.ContentString);
 
             var rows = doc.QuerySelectorAll("#main_table_center_center1 table table table tr");
             foreach (var row in rows)
@@ -289,14 +326,14 @@ namespace Jackett.Common.Indexers
                 if (episodeTitle.ToLower().Contains("720p"))
                     size = 1288490188L; // 1.2 GB
 
-                var release = GenerateRelease(episodeTitle, commentsLink, downloadLink, cat, episodePublish, size);
+                var release = GenerateRelease(episodeTitle, detailsStr, downloadLink, cat, episodePublish, size);
                 releases.Add(release);
             }
 
         }
 
         private void ParseMovieRelease(ICollection<ReleaseInfo> releases, TorznabQuery query, string title,
-            string commentsLink, string cat, DateTime publishDate, string quality)
+            string detailsStr, string cat, DateTime publishDate, string quality)
         {
             title = title.Trim();
 
@@ -324,6 +361,7 @@ namespace Jackett.Common.Indexers
                 if (queryMatch.Success)
                     quality = queryMatch.Groups[1].Value;
                 quality = quality.Trim().Replace("-", " ");
+                quality = Regex.Replace(quality, "HDRip", "BDRip", RegexOptions.IgnoreCase); // fix for Radarr
             }
 
             // add the year
@@ -350,19 +388,19 @@ namespace Jackett.Common.Indexers
             else if (title.ToLower().Contains("bdremux"))
                 size = 21474836480L; // 20 GB
 
-            var release = GenerateRelease(title, commentsLink, commentsLink, cat, publishDate, size);
+            var release = GenerateRelease(title, detailsStr, detailsStr, cat, publishDate, size);
             releases.Add(release);
         }
 
-        private ReleaseInfo GenerateRelease(string title, string commentsLink, string downloadLink, string cat,
+        private ReleaseInfo GenerateRelease(string title, string detailsStr, string downloadLink, string cat,
                                             DateTime publishDate, long size)
         {
             var link = new Uri(downloadLink);
-            var comments = new Uri(commentsLink);
+            var details = new Uri(detailsStr);
             var release = new ReleaseInfo
             {
                 Title = title,
-                Comments = comments,
+                Details = details,
                 Link = link,
                 Guid = link,
                 Category = MapTrackerCatToNewznab(cat),
@@ -371,8 +409,6 @@ namespace Jackett.Common.Indexers
                 Files = 1,
                 Seeders = 1,
                 Peers = 2,
-                MinimumRatio = 1,
-                MinimumSeedTime = 172800,// 48 hours
                 DownloadVolumeFactor = 0,
                 UploadVolumeFactor = 1
             };
@@ -498,17 +534,17 @@ namespace Jackett.Common.Indexers
             return newTitle;
         }
 
-        private static string GetMejortorrentCategory(string mejortorrentCat, string commentsLink, string title)
+        private static string GetMejortorrentCategory(string mejortorrentCat, string detailsStr, string title)
         {
             // get root category
             var cat = MejorTorrentCatType.Otro;
             if (mejortorrentCat == null)
             {
-                if (commentsLink.Contains("peliculas_extend"))
+                if (detailsStr.Contains("peliculas_extend"))
                     cat = MejorTorrentCatType.Pelicula;
-                else if (commentsLink.Contains("series_extend"))
+                else if (detailsStr.Contains("series_extend"))
                     cat = MejorTorrentCatType.Serie;
-                else if (commentsLink.Contains("musica_extend"))
+                else if (detailsStr.Contains("musica_extend"))
                     cat = MejorTorrentCatType.Musica;
             }
             else if (mejortorrentCat.Equals(MejorTorrentCatType.Pelicula) ||

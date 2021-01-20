@@ -85,6 +85,9 @@ namespace Jackett.Server.Controllers
         [TypeFilter(typeof(RequiresIndexer))]
         public async Task<IActionResult> UpdateConfig([FromBody]Common.Models.DTO.ConfigItem[] config)
         {
+            // invalidate cache for this indexer
+            cacheService.CleanIndexerCache(CurrentIndexer);
+
             try
             {
                 // HACK
@@ -95,7 +98,7 @@ namespace Jackett.Server.Controllers
 
                 if (configurationResult == IndexerConfigurationStatus.RequiresTesting)
                 {
-                    await IndexerService.TestIndexer(CurrentIndexer.ID);
+                    await IndexerService.TestIndexer(CurrentIndexer.Id);
                 }
 
                 return new NoContentResult();
@@ -126,7 +129,7 @@ namespace Jackett.Server.Controllers
             JToken jsonReply = new JObject();
             try
             {
-                await IndexerService.TestIndexer(CurrentIndexer.ID);
+                await IndexerService.TestIndexer(CurrentIndexer.Id);
                 CurrentIndexer.LastError = null;
                 return NoContent();
             }
@@ -146,7 +149,7 @@ namespace Jackett.Server.Controllers
         [HttpDelete]
         [TypeFilter(typeof(RequiresIndexer))]
         [Route("{indexerid}")]
-        public void Delete() => IndexerService.DeleteIndexer(CurrentIndexer.ID);
+        public void Delete() => IndexerService.DeleteIndexer(CurrentIndexer.Id);
 
         // TODO
         // This should go to ServerConfigurationController

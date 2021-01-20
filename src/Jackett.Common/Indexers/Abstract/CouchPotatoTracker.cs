@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks;
 using Jackett.Common.Models;
 using Jackett.Common.Models.IndexerConfig;
@@ -12,6 +13,7 @@ using NLog;
 
 namespace Jackett.Common.Indexers.Abstract
 {
+    [ExcludeFromCodeCoverage]
     public abstract class CouchPotatoTracker : BaseWebIndexer
     {
         protected string endpoint;
@@ -23,10 +25,12 @@ namespace Jackett.Common.Indexers.Abstract
             set => base.configData = value;
         }
 
-        protected CouchPotatoTracker(string name, string link, string description, IIndexerConfigurationService configService,
-                                     WebClient client, Logger logger, IProtectionService p, TorznabCapabilities caps,
+        protected CouchPotatoTracker(string link, string id, string name, string description,
+                                     IIndexerConfigurationService configService, WebClient client, Logger logger,
+                                     IProtectionService p, ICacheService cs, TorznabCapabilities caps,
                                      ConfigurationData configData, string endpoint)
-            : base(name,
+            : base(id: id,
+                   name: name,
                    description: description,
                    link: link,
                    caps: caps,
@@ -34,6 +38,7 @@ namespace Jackett.Common.Indexers.Abstract
                    client: client,
                    logger: logger,
                    p: p,
+                   cacheService: cs,
                    configData: configData)
         {
             this.endpoint = endpoint;
@@ -71,16 +76,16 @@ namespace Jackett.Common.Indexers.Abstract
 
             searchUrl += "?" + queryCollection.GetQueryString();
 
-            var response = await RequestStringWithCookiesAndRetry(searchUrl);
+            var response = await RequestWithCookiesAndRetryAsync(searchUrl);
 
             JObject json = null;
             try
             {
-                json = JObject.Parse(response.Content);
+                json = JObject.Parse(response.ContentString);
             }
             catch (Exception ex)
             {
-                throw new Exception("Error while parsing json: " + response.Content, ex);
+                throw new Exception("Error while parsing json: " + response.ContentString, ex);
             }
             var error = (string)json["error"];
             if (error != null)
@@ -96,7 +101,7 @@ namespace Jackett.Common.Indexers.Abstract
                     var release = new ReleaseInfo
                     {
                         Title = (string)r["release_name"],
-                        Comments = new Uri((string)r["details_url"]),
+                        Details = new Uri((string)r["details_url"]),
                         Link = new Uri((string)r["download_url"])
                     };
                     release.Guid = release.Link;
@@ -118,7 +123,7 @@ namespace Jackett.Common.Indexers.Abstract
             }
             catch (Exception ex)
             {
-                OnParseError(response.Content, ex);
+                OnParseError(response.ContentString, ex);
             }
 
             return releases;

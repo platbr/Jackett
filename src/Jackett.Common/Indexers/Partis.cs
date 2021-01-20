@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,6 +16,7 @@ using NLog;
 
 namespace Jackett.Common.Indexers
 {
+    [ExcludeFromCodeCoverage]
     public class Partis : BaseWebIndexer
     {
         private string LoginUrl => SiteLink + "user/login/";
@@ -26,15 +28,36 @@ namespace Jackett.Common.Indexers
             set => base.configData = value;
         }
 
-        public Partis(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps)
-            : base(name: "Partis",
+        public Partis(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps,
+            ICacheService cs)
+            : base(id: "partis",
+                   name: "Partis",
                    description: "Partis is a SLOVENIAN Private Torrent Tracker",
                    link: "https://www.partis.si/",
-                   caps: TorznabUtil.CreateDefaultTorznabTVCaps(),
+                   caps: new TorznabCapabilities
+                   {
+                       TvSearchParams = new List<TvSearchParam>
+                       {
+                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                       },
+                       MovieSearchParams = new List<MovieSearchParam>
+                       {
+                           MovieSearchParam.Q
+                       },
+                       MusicSearchParams = new List<MusicSearchParam>
+                       {
+                           MusicSearchParam.Q
+                       },
+                       BookSearchParams = new List<BookSearchParam>
+                       {
+                           BookSearchParam.Q
+                       }
+                   },
                    configService: configService,
                    client: wc,
                    logger: l,
                    p: ps,
+                   cacheService: cs,
                    configData: new ConfigurationDataBasicLogin())
         {
             Encoding = Encoding.UTF8;
@@ -84,7 +107,7 @@ namespace Jackett.Common.Indexers
             AddCategoryMapping(8, TorznabCatType.AudioVideo, "Music DVD");
             AddCategoryMapping(8, TorznabCatType.AudioVideo, "Videospoti");
             AddCategoryMapping(21, TorznabCatType.AudioAudiobook, "AudioBook");
-            AddCategoryMapping(3, TorznabCatType.BooksEbook, "eKnjige");
+            AddCategoryMapping(3, TorznabCatType.BooksEBook, "eKnjige");
         }
 
         public override async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
@@ -98,10 +121,10 @@ namespace Jackett.Common.Indexers
             };
 
             var result = await RequestLoginAndFollowRedirect(LoginUrl, pairs, string.Empty, false, null, null, true);
-            await ConfigureIfOK(result.Cookies, result.Content != null && result.Content.Contains("/odjava"), () =>
+            await ConfigureIfOK(result.Cookies, result.ContentString != null && result.ContentString.Contains("/odjava"), () =>
             {
                 var parser = new HtmlParser();
-                var dom = parser.ParseDocument(result.Content);
+                var dom = parser.ParseDocument(result.ContentString);
                 var errorMessage = dom.QuerySelector("div.obvet > span.najvecji").TextContent.Trim(); // Prijava ni uspela! obvestilo
                 throw new ExceptionWithConfigData(errorMessage, configData);
             });
@@ -113,7 +136,7 @@ namespace Jackett.Common.Indexers
             var releases = new List<ReleaseInfo>();     //List of releases initialization
             var searchString = query.GetQueryString();  //get search string from query
 
-            WebClientStringResult results = null;
+            WebResult results = null;
             var queryCollection = new NameValueCollection();
             var catList = MapTorznabCapsToTrackers(query);     // map categories from query to indexer specific
             var categ = string.Join(",", catList);
@@ -132,22 +155,23 @@ namespace Jackett.Common.Indexers
             logger.Info(string.Format("Searh URL Partis_: {0}", searchUrl));
 
             // add necessary headers
-            var heder = new Dictionary<string, string>
+            var header = new Dictionary<string, string>
             {
                 { "X-requested-with", "XMLHttpRequest" }
             };
 
             //get results and follow redirect
-            results = await RequestStringWithCookies(searchUrl, null, SearchUrl, heder);
+            results = await RequestWithCookiesAsync(searchUrl, referer: SearchUrl, headers: header);
             await FollowIfRedirect(results, null, null, null, true);
 
             // are we logged in?
-            if (!results.Content.Contains("/odjava"))
+            if (!results.ContentString.Contains("/odjava"))
             {
                 await ApplyConfiguration(null);
             }
             // another request with specific query - NEEDED for succesful response - return data
-            results = await RequestStringWithCookies(SiteLink + "brskaj/?rs=false&offset=0", null, SearchUrl, heder);
+            results = await RequestWithCookiesAsync(
+                SiteLink + "brskaj/?rs=false&offset=0", referer: SearchUrl, headers: header);
             await FollowIfRedirect(results, null, null, null, true);
 
             // parse results
@@ -156,7 +180,7 @@ namespace Jackett.Common.Indexers
                 var RowsSelector = "div.list > div[name=\"torrrow\"]";
 
                 var ResultParser = new HtmlParser();
-                var SearchResultDocument = ResultParser.ParseDocument(results.Content);
+                var SearchResultDocument = ResultParser.ParseDocument(results.ContentString);
                 var Rows = SearchResultDocument.QuerySelectorAll(RowsSelector);
                 foreach (var Row in Rows)
                 {
@@ -177,8 +201,8 @@ namespace Jackett.Common.Indexers
 
                         // Title and torrent link
                         release.Title = qDetailsLink.TextContent;
-                        release.Comments = new Uri(SiteLink + qDetailsLink.GetAttribute("href").TrimStart('/'));
-                        release.Guid = release.Comments;
+                        release.Details = new Uri(SiteLink + qDetailsLink.GetAttribute("href").TrimStart('/'));
+                        release.Guid = release.Details;
 
                         // Date of torrent creation
                         var liopis = Row.QuerySelector("div.listeklink div span.middle");
@@ -211,13 +235,13 @@ namespace Jackett.Common.Indexers
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(string.Format("{0}: Error while parsing row '{1}':\n\n{2}", ID, Row.OuterHtml, ex));
+                        logger.Error(string.Format("{0}: Error while parsing row '{1}':\n\n{2}", Id, Row.OuterHtml, ex));
                     }
                 }
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;

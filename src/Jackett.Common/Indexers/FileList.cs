@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Threading.Tasks;
 using Jackett.Common.Models;
@@ -13,6 +14,7 @@ using NLog;
 
 namespace Jackett.Common.Indexers
 {
+    [ExcludeFromCodeCoverage]
     public class FileList : BaseWebIndexer
     {
         public override string[] LegacySiteLinks { get; protected set; } =
@@ -20,7 +22,7 @@ namespace Jackett.Common.Indexers
             "http://filelist.ro/",
             "https://filelist.ro/",
             "https://flro.org/",
-            "http://flro.org/",
+            "http://flro.org/"
         };
 
         private string ApiUrl => SiteLink + "api.php";
@@ -28,19 +30,37 @@ namespace Jackett.Common.Indexers
 
         private new ConfigurationDataFileList configData => (ConfigurationDataFileList)base.configData;
 
-        public FileList(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps)
-            : base("FileList",
-                description: "The best Romanian site.",
-                link: "https://filelist.io/",
-                caps: new TorznabCapabilities
-                {
-                    SupportsImdbMovieSearch = true
-                },
-                configService: configService,
-                client: wc,
-                logger: l,
-                p: ps,
-                configData: new ConfigurationDataFileList())
+        public FileList(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps,
+            ICacheService cs)
+            : base(id: "filelist",
+                   name: "FileList",
+                   description: "The best Romanian site.",
+                   link: "https://filelist.io/",
+                   caps: new TorznabCapabilities
+                   {
+                       TvSearchParams = new List<TvSearchParam>
+                       {
+                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                       },
+                       MovieSearchParams = new List<MovieSearchParam>
+                       {
+                           MovieSearchParam.Q, MovieSearchParam.ImdbId
+                       },
+                       MusicSearchParams = new List<MusicSearchParam>
+                       {
+                           MusicSearchParam.Q
+                       },
+                       BookSearchParams = new List<BookSearchParam>
+                       {
+                           BookSearchParam.Q
+                       }
+                   },
+                   configService: configService,
+                   client: wc,
+                   logger: l,
+                   p: ps,
+                   cacheService: cs,
+                   configData: new ConfigurationDataFileList())
         {
             Encoding = Encoding.UTF8;
             Language = "ro-ro";
@@ -66,7 +86,7 @@ namespace Jackett.Common.Indexers
             AddCategoryMapping(19, TorznabCatType.MoviesForeign, "Filme HD-RO");
             AddCategoryMapping(20, TorznabCatType.MoviesBluRay, "Filme Blu-Ray");
             AddCategoryMapping(21, TorznabCatType.TVHD, "Seriale HD");
-            AddCategoryMapping(22, TorznabCatType.PCPhoneOther, "Mobile");
+            AddCategoryMapping(22, TorznabCatType.PCMobileOther, "Mobile");
             AddCategoryMapping(23, TorznabCatType.TVSD, "Seriale SD");
             AddCategoryMapping(24, TorznabCatType.TVAnime, "Anime");
             AddCategoryMapping(25, TorznabCatType.Movies3D, "Filme 3D");
@@ -122,7 +142,7 @@ namespace Jackett.Common.Indexers
                     var release = new ReleaseInfo
                     {
                         Title = (string)row["name"],
-                        Comments = detailsUri,
+                        Details = detailsUri,
                         Link = link,
                         Category = MapTrackerCatDescToNewznab((string)row["category"]),
                         Size = (long)row["size"],
@@ -185,8 +205,8 @@ namespace Jackett.Common.Indexers
                 {
                     {"Authorization", "Basic " + auth}
                 };
-                var response = await RequestStringWithCookies(searchUrl, headers: headers);
-                return response.Content;
+                var response = await RequestWithCookiesAsync(searchUrl, headers: headers);
+                return response.ContentString;
             }
             catch (Exception inner)
             {

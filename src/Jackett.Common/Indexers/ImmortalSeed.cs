@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Net;
@@ -15,14 +16,15 @@ using NLog;
 
 namespace Jackett.Common.Indexers
 {
+    [ExcludeFromCodeCoverage]
     public class ImmortalSeed : BaseWebIndexer
     {
         private string BrowsePage => SiteLink + "browse.php";
         private string LoginUrl => SiteLink + "takelogin.php";
         private string QueryString => "?do=search&keywords={0}&search_type=t_name&category=0&include_dead_torrents=no";
 
-        public override string[] LegacySiteLinks { get; protected set; } = new string[] {
-            "http://immortalseed.me/",
+        public override string[] LegacySiteLinks { get; protected set; } = {
+            "http://immortalseed.me/"
         };
 
         private new ConfigurationDataBasicLogin configData
@@ -31,16 +33,37 @@ namespace Jackett.Common.Indexers
             set => base.configData = value;
         }
 
-        public ImmortalSeed(IIndexerConfigurationService configService, Utils.Clients.WebClient wc, Logger l, IProtectionService ps)
-            : base(name: "ImmortalSeed",
-                description: "ImmortalSeed (iS) is a Private Torrent Tracker for MOVIES / TV / GENERAL",
-                link: "https://immortalseed.me/",
-                caps: TorznabUtil.CreateDefaultTorznabTVCaps(),
-                configService: configService,
-                client: wc,
-                logger: l,
-                p: ps,
-                configData: new ConfigurationDataBasicLogin())
+        public ImmortalSeed(IIndexerConfigurationService configService, Utils.Clients.WebClient wc, Logger l,
+            IProtectionService ps, ICacheService cs)
+            : base(id: "immortalseed",
+                   name: "ImmortalSeed",
+                   description: "ImmortalSeed (iS) is a Private Torrent Tracker for MOVIES / TV / GENERAL",
+                   link: "https://immortalseed.me/",
+                   caps: new TorznabCapabilities
+                   {
+                       TvSearchParams = new List<TvSearchParam>
+                       {
+                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                       },
+                       MovieSearchParams = new List<MovieSearchParam>
+                       {
+                           MovieSearchParam.Q
+                       },
+                       MusicSearchParams = new List<MusicSearchParam>
+                       {
+                           MusicSearchParam.Q
+                       },
+                       BookSearchParams = new List<BookSearchParam>
+                       {
+                           BookSearchParam.Q
+                       }
+                   },
+                   configService: configService,
+                   client: wc,
+                   logger: l,
+                   p: ps,
+                   cacheService: cs,
+                   configData: new ConfigurationDataBasicLogin())
         {
             Encoding = Encoding.UTF8;
             Language = "en-us";
@@ -54,10 +77,10 @@ namespace Jackett.Common.Indexers
             AddCategoryMapping(54, TorznabCatType.TVDocumentary, "Documentary - HD");
             AddCategoryMapping(41, TorznabCatType.BooksComics, "Comics");
             AddCategoryMapping(25, TorznabCatType.PCGames, "Games");
-            AddCategoryMapping(29, TorznabCatType.ConsoleXbox, "Games Xbox");
+            AddCategoryMapping(29, TorznabCatType.ConsoleXBox, "Games Xbox");
             AddCategoryMapping(27, TorznabCatType.PCGames, "Games-PC Rips");
             AddCategoryMapping(28, TorznabCatType.ConsolePS4, "Games-PSx");
-            AddCategoryMapping(49, TorznabCatType.PCPhoneOther, "Mobile");
+            AddCategoryMapping(49, TorznabCatType.PCMobileOther, "Mobile");
             AddCategoryMapping(59, TorznabCatType.MoviesUHD, "Movies-4k");
             AddCategoryMapping(60, TorznabCatType.MoviesForeign, "Non-English 4k Movies");
             AddCategoryMapping(16, TorznabCatType.MoviesHD, "Movies HD");
@@ -81,11 +104,11 @@ namespace Jackett.Common.Indexers
             AddCategoryMapping(9, TorznabCatType.TVSD, "TV - Standard Definition - XviD");
             AddCategoryMapping(4, TorznabCatType.TVHD, "TV Season Packs - HD");
             AddCategoryMapping(6, TorznabCatType.TVSD, "TV Season Packs - SD");
-            AddCategoryMapping(22, TorznabCatType.BooksEbook, "Ebooks");
+            AddCategoryMapping(22, TorznabCatType.BooksEBook, "Ebooks");
             AddCategoryMapping(26, TorznabCatType.PCGames, "Games-PC ISO");
-            AddCategoryMapping(46, TorznabCatType.BooksMagazines, "Magazines");
-            AddCategoryMapping(50, TorznabCatType.PCPhoneIOS, "IOS");
-            AddCategoryMapping(51, TorznabCatType.PCPhoneAndroid, "Android");
+            AddCategoryMapping(46, TorznabCatType.BooksMags, "Magazines");
+            AddCategoryMapping(50, TorznabCatType.PCMobileiOS, "IOS");
+            AddCategoryMapping(51, TorznabCatType.PCMobileAndroid, "Android");
             AddCategoryMapping(52, TorznabCatType.PC0day, "Windows");
             AddCategoryMapping(53, TorznabCatType.TVDocumentary, "Documentary - SD");
         }
@@ -101,9 +124,9 @@ namespace Jackett.Common.Indexers
 
             var response = await RequestLoginAndFollowRedirect(LoginUrl, pairs, null, true, null, LoginUrl);
 
-            await ConfigureIfOK(response.Cookies, response.Content.Contains("You have successfully logged in"), () =>
+            await ConfigureIfOK(response.Cookies, response.ContentString.Contains("You have successfully logged in"), () =>
             {
-                var errorMessage = response.Content;
+                var errorMessage = response.ContentString;
                 throw new ExceptionWithConfigData(errorMessage, configData);
             });
 
@@ -118,19 +141,19 @@ namespace Jackett.Common.Indexers
             if (!string.IsNullOrWhiteSpace(query.GetQueryString()))
                 searchUrl += string.Format(QueryString, WebUtility.UrlEncode(query.GetQueryString()));
 
-            var results = await RequestStringWithCookiesAndRetry(searchUrl);
+            var results = await RequestWithCookiesAndRetryAsync(searchUrl);
 
             // Occasionally the cookies become invalid, login again if that happens
-            if (results.Content.Contains("You do not have permission to access this page."))
+            if (results.ContentString.Contains("You do not have permission to access this page."))
             {
                 await ApplyConfiguration(null);
-                results = await RequestStringWithCookiesAndRetry(searchUrl);
+                results = await RequestWithCookiesAndRetryAsync(searchUrl);
             }
 
             try
             {
                 var parser = new HtmlParser();
-                var dom = parser.ParseDocument(results.Content);
+                var dom = parser.ParseDocument(results.ContentString);
 
                 var rows = dom.QuerySelectorAll("#sortabletable tr:has(a[href*=\"details.php?id=\"])");
                 foreach (var row in rows)
@@ -149,7 +172,7 @@ namespace Jackett.Common.Indexers
                     var qLink = row.QuerySelector("a[href*=\"download.php\"]");
                     release.Link = new Uri(qLink.GetAttribute("href"));
                     release.Guid = release.Link;
-                    release.Comments = new Uri(qDetails.GetAttribute("href"));
+                    release.Details = new Uri(qDetails.GetAttribute("href"));
 
                     // 07-22-2015 11:08 AM
                     var dateString = row.QuerySelectorAll("td:nth-of-type(2) div").Last().LastChild.TextContent.Trim();
@@ -189,7 +212,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -13,9 +14,11 @@ using Jackett.Common.Utils;
 using Jackett.Common.Utils.Clients;
 using Newtonsoft.Json.Linq;
 using NLog;
+using static Jackett.Common.Models.IndexerConfig.ConfigurationData;
 
 namespace Jackett.Common.Indexers
 {
+    [ExcludeFromCodeCoverage]
     public class GazelleGames : BaseWebIndexer
     {
         private string LoginUrl => SiteLink + "login.php";
@@ -27,8 +30,10 @@ namespace Jackett.Common.Indexers
             set => base.configData = value;
         }
 
-        public GazelleGames(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps)
-            : base(name: "GazelleGames",
+        public GazelleGames(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps,
+            ICacheService cs)
+            : base(id: "gazellegames",
+                   name: "GazelleGames",
                    description: "A gaming tracker.",
                    link: "https://gazellegames.net/",
                    caps: new TorznabCapabilities(),
@@ -36,25 +41,28 @@ namespace Jackett.Common.Indexers
                    client: wc,
                    logger: l,
                    p: ps,
+                   cacheService: cs,
                    configData: new ConfigurationDataCookie())
         {
             Encoding = Encoding.UTF8;
             Language = "en-us";
             Type = "private";
 
+            configData.AddDynamic("searchgroupnames", new BoolItem { Name = "Search Group Names Only", Value = false });
+
             // Apple
             AddCategoryMapping("Mac", TorznabCatType.ConsoleOther, "Mac");
-            AddCategoryMapping("iOS", TorznabCatType.PCPhoneIOS, "iOS");
+            AddCategoryMapping("iOS", TorznabCatType.PCMobileiOS, "iOS");
             AddCategoryMapping("Apple Bandai Pippin", TorznabCatType.ConsoleOther, "Apple Bandai Pippin");
 
             // Google
-            AddCategoryMapping("Android", TorznabCatType.PCPhoneAndroid, "Android");
+            AddCategoryMapping("Android", TorznabCatType.PCMobileAndroid, "Android");
 
             // Microsoft
             AddCategoryMapping("DOS", TorznabCatType.PCGames, "DOS");
             AddCategoryMapping("Windows", TorznabCatType.PCGames, "Windows");
-            AddCategoryMapping("Xbox", TorznabCatType.ConsoleXbox, "Xbox");
-            AddCategoryMapping("Xbox 360", TorznabCatType.ConsoleXbox360, "Xbox 360");
+            AddCategoryMapping("Xbox", TorznabCatType.ConsoleXBox, "Xbox");
+            AddCategoryMapping("Xbox 360", TorznabCatType.ConsoleXBox360, "Xbox 360");
 
             // Nintendo
             AddCategoryMapping("Game Boy", TorznabCatType.ConsoleOther, "Game Boy");
@@ -170,7 +178,7 @@ namespace Jackett.Common.Indexers
             // special categories (real categories/not platforms)
             AddCategoryMapping("OST", TorznabCatType.AudioOther, "OST");
             AddCategoryMapping("Applications", TorznabCatType.PC0day, "Applications");
-            AddCategoryMapping("E-Books", TorznabCatType.BooksEbook, "E-Books");
+            AddCategoryMapping("E-Books", TorznabCatType.BooksEBook, "E-Books");
         }
 
         public override async Task<IndexerConfigurationStatus> ApplyConfiguration(JToken configJson)
@@ -204,9 +212,11 @@ namespace Jackett.Common.Indexers
             var searchUrl = BrowseUrl;
             var searchString = query.GetQueryString();
 
+            var searchType = ((BoolItem)configData.GetDynamic("searchgroupnames")).Value ? "groupname" : "searchstr";
+
             var queryCollection = new NameValueCollection
             {
-                {"searchstr", searchString},
+                {searchType, searchString},
                 {"order_by", "time"},
                 {"order_way", "desc"},
                 {"action", "basic"},
@@ -215,14 +225,12 @@ namespace Jackett.Common.Indexers
 
             var i = 0;
             foreach (var cat in MapTorznabCapsToTrackers(query))
-            {
-                queryCollection.Add("artistcheck[" + i + "]", cat);
-                i++;
-            }
+                queryCollection.Add($"artistcheck[{i++}]", cat);
+                
 
             searchUrl += "?" + queryCollection.GetQueryString();
 
-            var results = await RequestStringWithCookies(searchUrl);
+            var results = await RequestWithCookiesAsync(searchUrl);
             if (results.IsRedirect && results.RedirectingTo.EndsWith("login.php"))
             {
                 throw new Exception("relogin needed, please update your cookie");
@@ -233,7 +241,7 @@ namespace Jackett.Common.Indexers
                 var RowsSelector = ".torrent_table > tbody > tr";
 
                 var SearchResultParser = new HtmlParser();
-                var SearchResultDocument = SearchResultParser.ParseDocument(results.Content);
+                var SearchResultDocument = SearchResultParser.ParseDocument(results.ContentString);
                 var Rows = SearchResultDocument.QuerySelectorAll(RowsSelector);
 
                 var stickyGroup = false;
@@ -274,7 +282,7 @@ namespace Jackett.Common.Indexers
                             continue;
                         var qDetailsLink = Row.QuerySelector("a[href^=\"torrents.php?id=\"]");
                         var title = qDetailsLink.TextContent.Replace(", Freeleech!", "").Replace(", Neutral Leech!", "");
-                        if (stickyGroup && (query.ImdbID == null || !TorznabCaps.SupportsImdbMovieSearch) && !query.MatchQueryStringAND(title)) // AND match for sticky releases
+                        if (stickyGroup && (query.ImdbID == null || !TorznabCaps.MovieSearchImdbAvailable) && !query.MatchQueryStringAND(title)) // AND match for sticky releases
                             continue;
                         var qDescription = qDetailsLink.QuerySelector("span.torrent_info_tags");
                         var qDLLink = Row.QuerySelector("a[href^=\"torrents.php?action=download\"]");
@@ -290,10 +298,11 @@ namespace Jackett.Common.Indexers
                         var publishDate = DateTime.SpecifyKind(
                             DateTime.ParseExact(Time, "MMM dd yyyy, HH:mm", CultureInfo.InvariantCulture),
                             DateTimeKind.Unspecified).ToLocalTime();
-                        var comments = new Uri(SiteLink + qDetailsLink.GetAttribute("href"));
+                        var details = new Uri(SiteLink + qDetailsLink.GetAttribute("href"));
                         var grabs = ParseUtil.CoerceLong(qGrabs.TextContent);
                         var leechers = ParseUtil.CoerceInt(qLeechers.TextContent);
                         var size = ReleaseInfo.GetBytes(sizeString);
+
                         var release = new ReleaseInfo
                         {
                             MinimumRatio = 1,
@@ -301,7 +310,7 @@ namespace Jackett.Common.Indexers
                             Category = GroupCategory,
                             PublishDate = publishDate,
                             Size = size,
-                            Comments = comments,
+                            Details = details,
                             Link = link,
                             Guid = link,
                             Grabs = grabs,
@@ -310,7 +319,7 @@ namespace Jackett.Common.Indexers
                             Title = title,
                             Description = qDescription?.TextContent,
                             UploadVolumeFactor = qNeutralLeech is null ? 1 : 0,
-                            DownloadVolumeFactor = qFreeLeech != null || qNeutralLeech != null ? 0 : 1,
+                            DownloadVolumeFactor = qFreeLeech != null || qNeutralLeech != null ? 0 : 1
                         };
                         releases.Add(release);
                     }
@@ -318,7 +327,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;

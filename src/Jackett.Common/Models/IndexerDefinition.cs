@@ -29,7 +29,7 @@ namespace Jackett.Common.Models
     // Cardigann yaml classes
     public class IndexerDefinition
     {
-        public string Site { get; set; }
+        public string Id { get; set; }
         public List<settingsField> Settings { get; set; }
         public string Name { get; set; }
         public string Description { get; set; }
@@ -76,7 +76,6 @@ namespace Jackett.Common.Models
     {
         public string Type { get; set; }
         public string Selector { get; set; }
-        public string Image { get => throw new Exception("Deprecated, please use Login.Captcha.Selector instead"); set => throw new Exception("Deprecated, please use login/captcha/selector instead of image"); }
         public string Input { get; set; }
     }
 

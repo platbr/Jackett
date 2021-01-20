@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -18,8 +19,13 @@ using NLog;
 
 namespace Jackett.Common.Indexers
 {
+    [ExcludeFromCodeCoverage]
     internal class LostFilm : BaseWebIndexer
     {
+        public override string[] LegacySiteLinks { get; protected set; } = {
+            "https://www.lostfilm.tv/"
+        };
+
         private static readonly Regex parsePlayEpisodeRegex = new Regex("PlayEpisode\\('(?<id>\\d{1,3})(?<season>\\d{3})(?<episode>\\d{3})'\\)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex parseReleaseDetailsRegex = new Regex("Видео:\\ (?<quality>.+).\\ Размер:\\ (?<size>.+).\\ Перевод", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -87,34 +93,49 @@ namespace Jackett.Common.Indexers
             set => base.configData = value;
         }
 
-        public LostFilm(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps)
-            : base(name: "LostFilm.tv",
+        public LostFilm(IIndexerConfigurationService configService, WebClient wc, Logger l, IProtectionService ps,
+            ICacheService cs)
+            : base(id: "lostfilm",
+                   name: "LostFilm.tv",
                    description: "Unique portal about foreign series",
-                   link: "https://www.lostfilm.tv/",
-                   caps: TorznabUtil.CreateDefaultTorznabTVCaps(),
+                   link: "https://www.lostfilm.run/",
+                   caps: new TorznabCapabilities {
+                       TvSearchParams = new List<TvSearchParam>
+                       {
+                           TvSearchParam.Q, TvSearchParam.Season, TvSearchParam.Ep
+                       },
+                       MovieSearchParams = new List<MovieSearchParam>
+                       {
+                           MovieSearchParam.Q
+                       }
+                   },
                    configService: configService,
                    client: wc,
                    logger: l,
                    p: ps,
+                   cacheService: cs,
                    configData: new ConfigurationDataCaptchaLogin())
         {
             Encoding = Encoding.UTF8;
             Language = "ru-ru";
             Type = "semi-private";
+
+            // TODO: review if there is only this category (movie search is enabled)
+            AddCategoryMapping(1, TorznabCatType.TV);
         }
 
         public override async Task<ConfigurationData> GetConfigurationForSetup()
         {
             // looks like after some failed login attempts there's a captcha
-            var loginPage = await RequestStringWithCookies(LoginUrl, string.Empty);
+            var loginPage = await RequestWithCookiesAsync(LoginUrl, string.Empty);
             var parser = new HtmlParser();
-            var document = parser.ParseDocument(loginPage.Content);
+            var document = parser.ParseDocument(loginPage.ContentString);
             var qCaptchaImg = document.QuerySelector("img#captcha_pictcha");
             if (qCaptchaImg != null)
             {
                 var captchaUrl = SiteLink + qCaptchaImg.GetAttribute("src");
-                var captchaImage = await RequestBytesWithCookies(captchaUrl, loginPage.Cookies);
-                configData.CaptchaImage.Value = captchaImage.Content;
+                var captchaImage = await RequestWithCookiesAsync(captchaUrl, loginPage.Cookies);
+                configData.CaptchaImage.Value = captchaImage.ContentBytes;
             }
             else
             {
@@ -153,9 +174,9 @@ namespace Jackett.Common.Indexers
             }
 
             var result = await RequestLoginAndFollowRedirect(ApiUrl, data, CookieHeader, true, SiteLink, ApiUrl, true);
-            await ConfigureIfOK(result.Cookies, result.Content != null && result.Content.Contains("\"success\":true"), () =>
+            await ConfigureIfOK(result.Cookies, result.ContentString != null && result.ContentString.Contains("\"success\":true"), () =>
             {
-                var errorMessage = result.Content;
+                var errorMessage = result.ContentString;
                 if (errorMessage.Contains("\"error\":2"))
                     errorMessage = "Captcha is incorrect";
                 if (errorMessage.Contains("\"error\":3"))
@@ -176,13 +197,13 @@ namespace Jackett.Common.Indexers
                 { "type", "logout" }
             };
 
-            var response = await PostDataWithCookies(url: ApiUrl, data: data);
-            logger.Debug("Logout result: " + response.Content);
+            var response = await RequestWithCookiesAsync(ApiUrl, method: RequestType.POST, data: data);
+            logger.Debug("Logout result: " + response.ContentString);
 
             var isOK = response.Status == System.Net.HttpStatusCode.OK;
             if (!isOK)
             {
-                logger.Error("Logout failed with response: " + response.Content);
+                logger.Error("Logout failed with response: " + response.ContentString);
             }
 
             return isOK;
@@ -205,18 +226,18 @@ namespace Jackett.Common.Indexers
             }
         }
 
-        private async Task<WebClientStringResult> RequestStringAndRelogin(string url)
+        private async Task<WebResult> RequestStringAndRelogin(string url)
         {
-            var results = await RequestStringWithCookies(url);
-            if (results.Content.Contains("503 Service"))
+            var results = await RequestWithCookiesAsync(url);
+            if (results.ContentString.Contains("503 Service"))
             {
-                throw new ExceptionWithConfigData(results.Content, configData);
+                throw new ExceptionWithConfigData(results.ContentString, configData);
             }
-            else if (results.Content.Contains("href=\"/login\""))
+            else if (results.ContentString.Contains("href=\"/login\""))
             {
                 // Re-login
                 await ApplyConfiguration(null);
-                return await RequestStringWithCookies(url);
+                return await RequestWithCookiesAsync(url);
             }
             else
             {
@@ -280,8 +301,8 @@ namespace Jackett.Common.Indexers
                     { "val", searchString }
                 };
                 logger.Debug("> Searching: " + searchString);
-                var response = await PostDataWithCookies(url: ApiUrl, data: data);
-                if (response.Content == null)
+                var response = await RequestWithCookiesAsync(ApiUrl, method: RequestType.POST, data: data);
+                if (response.ContentString == null)
                 {
                     logger.Debug("> Empty series response for query: " + searchString);
                     continue;
@@ -289,7 +310,7 @@ namespace Jackett.Common.Indexers
 
                 try
                 {
-                    var json = JToken.Parse(response.Content);
+                    var json = JToken.Parse(response.ContentString);
                     if (json == null || json.Type == JTokenType.Array)
                     {
                         logger.Debug("> Invalid response for query: " + searchString);
@@ -371,7 +392,7 @@ namespace Jackett.Common.Indexers
                 }
                 catch (Exception ex)
                 {
-                    OnParseError(response.Content, ex);
+                    OnParseError(response.ContentString, ex);
                 }
             }
             while (--searchKeywords > 0);
@@ -392,7 +413,7 @@ namespace Jackett.Common.Indexers
             try
             {
                 var parser = new HtmlParser();
-                var document = parser.ParseDocument(results.Content);
+                var document = parser.ParseDocument(results.ContentString);
                 var rows = document.QuerySelectorAll("div.row");
 
                 foreach (var row in rows)
@@ -406,7 +427,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;
@@ -421,12 +442,12 @@ namespace Jackett.Common.Indexers
             try
             {
                 var parser = new HtmlParser();
-                var document = parser.ParseDocument(results.Content);
+                var document = parser.ParseDocument(results.ContentString);
 
                 var playButton = document.QuerySelector("div.external-btn");
                 if (playButton != null && !playButton.ClassList.Contains("inactive"))
                 {
-                    var comments = new Uri(url);
+                    var details = new Uri(url);
 
                     var dateString = document.QuerySelector("div.title-block > div.details-pane > div.left-box").TextContent;
                     dateString = TrimString(dateString, "eng: ", " г."); // '... Дата выхода eng: 09 марта 2012 г. ...' -> '09 марта 2012'
@@ -445,7 +466,7 @@ namespace Jackett.Common.Indexers
 
                     foreach (var release in episodeReleases)
                     {
-                        release.Comments = comments;
+                        release.Details = details;
                         release.PublishDate = date;
                     }
                     releases.AddRange(episodeReleases);
@@ -453,7 +474,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;
@@ -464,12 +485,12 @@ namespace Jackett.Common.Indexers
             logger.Debug("FetchSeriesReleases: " + url + " S: " + query.Season.ToString() + " E: " + query.Episode + " Filter: " + filter);
 
             var releases = new List<ReleaseInfo>();
-            var results = await RequestStringWithCookies(url);
+            var results = await RequestWithCookiesAsync(url);
 
             try
             {
                 var parser = new HtmlParser();
-                var document = parser.ParseDocument(results.Content);
+                var document = parser.ParseDocument(results.ContentString);
                 var seasons = document.QuerySelectorAll("div.serie-block");
                 var rowSelector = "table.movie-parts-list > tbody > tr";
 
@@ -507,14 +528,14 @@ namespace Jackett.Common.Indexers
                         var dateColumn = lastEpisode.QuerySelector("td.delta");
                         var date = DateFromEpisodeColumn(dateColumn);
 
-                        var comments = new Uri(url); // Current season(-s) page url
+                        var details = new Uri(url); // Current season(-s) page url
 
                         var urlDetails = new TrackerUrlDetails(seasonButton);
                         var seasonReleases = await FetchTrackerReleases(urlDetails);
 
                         foreach (var release in seasonReleases)
                         {
-                            release.Comments = comments;
+                            release.Details = details;
                             release.PublishDate = date;
                         }
 
@@ -551,6 +572,8 @@ namespace Jackett.Common.Indexers
                             }
 
                             var playButton = row.QuerySelector("td.zeta > div.external-btn");
+                            if (playButton == null) // #9725
+                                continue;
 
                             if (!string.IsNullOrEmpty(query.Episode))
                             {
@@ -571,21 +594,21 @@ namespace Jackett.Common.Indexers
                             var link = dateColumn.GetAttribute("onclick"); // goTo('/series/Prison_Break/season_5/episode_9/',false)
                             link = TrimString(link, '\'', '\'');
                             var episodeUrl = SiteLink + link.TrimStart('/');
-                            var comments = new Uri(episodeUrl);
+                            var details = new Uri(episodeUrl);
 
                             var urlDetails = new TrackerUrlDetails(playButton);
                             var episodeReleases = await FetchTrackerReleases(urlDetails);
 
                             foreach (var release in episodeReleases)
                             {
-                                release.Comments = comments;
+                                release.Details = details;
                                 release.PublishDate = date;
                             }
                             releases.AddRange(episodeReleases);
                         }
                         catch (Exception ex)
                         {
-                            logger.Error(string.Format("{0}: Error while parsing row '{1}':\n\n{2}", ID, row.OuterHtml, ex));
+                            logger.Error(string.Format("{0}: Error while parsing row '{1}':\n\n{2}", Id, row.OuterHtml, ex));
                         }
 
                         if (couldBreak)
@@ -597,7 +620,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;
@@ -619,20 +642,20 @@ namespace Jackett.Common.Indexers
             logger.Debug("FetchTrackerReleases: " + url);
 
             // Get redirection page with generated link on it. This link can't be constructed manually as it contains Hash field and hashing algo is unknown.
-            var results = await RequestStringWithCookies(url);
-            if (results.Content == null)
+            var results = await RequestWithCookiesAsync(url);
+            if (results.ContentString == null)
             {
                 throw new ExceptionWithConfigData("Empty response from " + url, configData);
             }
-            if (results.Content == "log in first")
+            if (results.ContentString == "log in first")
             {
-                throw new ExceptionWithConfigData(results.Content, configData);
+                throw new ExceptionWithConfigData(results.ContentString, configData);
             }
 
             try
             {
                 var parser = new HtmlParser();
-                var document = parser.ParseDocument(results.Content);
+                var document = parser.ParseDocument(results.ContentString);
                 var meta = document.QuerySelector("meta");
                 var metaContent = meta.GetAttribute("content");
 
@@ -642,7 +665,7 @@ namespace Jackett.Common.Indexers
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             // Failure path
@@ -652,13 +675,13 @@ namespace Jackett.Common.Indexers
         private async Task<List<ReleaseInfo>> FollowTrackerRedirection(string url, TrackerUrlDetails details)
         {
             logger.Debug("FollowTrackerRedirection: " + url);
-            var results = await RequestStringWithCookies(url);
+            var results = await RequestWithCookiesAsync(url);
             var releases = new List<ReleaseInfo>();
 
             try
             {
                 var parser = new HtmlParser();
-                var document = parser.ParseDocument(results.Content);
+                var document = parser.ParseDocument(results.ContentString);
                 var rows = document.QuerySelectorAll("div.inner-box--item");
 
                 logger.Debug("> Parsing " + rows.Count().ToString() + " releases");
@@ -709,7 +732,7 @@ namespace Jackett.Common.Indexers
 
                         // Ru title: downloadLink.TextContent.Replace("\n", "");
                         // En title should be manually constructed.
-                        var titleComponents = new string[] {
+                        var titleComponents = new[] {
                             serieTitle, details.GetEpisodeString(), episodeName, techInfo
                         };
                         var downloadLink = row.QuerySelector("div.inner-box--link > a");
@@ -743,13 +766,13 @@ namespace Jackett.Common.Indexers
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(string.Format("{0}: Error while parsing row '{1}':\n\n{2}", ID, row.OuterHtml, ex));
+                        logger.Error(string.Format("{0}: Error while parsing row '{1}':\n\n{2}", Id, row.OuterHtml, ex));
                     }
                 }
             }
             catch (Exception ex)
             {
-                OnParseError(results.Content, ex);
+                OnParseError(results.ContentString, ex);
             }
 
             return releases;
