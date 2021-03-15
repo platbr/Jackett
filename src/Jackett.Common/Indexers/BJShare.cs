@@ -395,7 +395,7 @@ namespace Jackett.Common.Indexers
                                                  " ", titleElements.Skip(6));
 
                         if (Regex.IsMatch(release.Description, "(Dual|[Nn]acional|[Dd]ublado)"))
-                            release.Title += " / Brazilian";
+                            release.Title += " Brazilian";
 
                         // This tracker does not provide an publish date to search terms (only on last 24h page)
                         release.PublishDate = DateTime.Today;
@@ -514,6 +514,9 @@ namespace Jackett.Common.Indexers
                                     }
                             }
                         }
+
+                        if (Regex.IsMatch(extraInfo, "(Dual|[Nn]acional|[Dd]ublado)"))
+                            extraInfo += " Brazilian";
 
                         var catStr = qCatLink.GetAttribute("href").Split('=')[1].Split('&')[0];
 
