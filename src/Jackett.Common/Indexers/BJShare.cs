@@ -394,7 +394,7 @@ namespace Jackett.Common.Indexers
                                              titleElements[2] + " " + titleElements[4] + " " + string.Join(
                                                  " ", titleElements.Skip(6));
 
-                        if (Regex.IsMatch(release.Description, "([Dd]ual(.{1}?)[AaÁá]udio|[Nn]acional|[Dd]ublado)"))
+                        if (Regex.IsMatch(release.Description, "(Dual|[Nn]acional|[Dd]ublado)"))
                             release.Title += " / Brazilian";
 
                         // This tracker does not provide an publish date to search terms (only on last 24h page)
