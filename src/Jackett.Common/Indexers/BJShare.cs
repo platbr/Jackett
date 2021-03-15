@@ -376,19 +376,33 @@ namespace Jackett.Common.Indexers
 
                         // Adjust the description in order to can be read by Radarr and Sonarr
                         var cleanDescription = release.Description.Trim().TrimStart('[').TrimEnd(']');
-                   
-                        if (Regex.IsMatch(release.Description, "(Dual|Nacional|Dublado)"))
-                            cleanDescription += " / Brazilian";
+                        string[] titleElements;
 
-                        release.Title = release.Title.Trim() + " " + cleanDescription;
-                       
+                        //Formats the title so it can be parsed later
+                        var stringSeparators = new[]
+                        {
+                            " / "
+                        };
+                        titleElements = cleanDescription.Split(stringSeparators, StringSplitOptions.None);
+                        // release.Title += string.Join(" ", titleElements);
+                        release.Title = release.Title.Trim();
+                        if (titleElements.Length < 6)
+                            // Usually non movies / series could have less than 6 elements, eg: Books.
+                            release.Title += " " + string.Join(" ", titleElements);
+                        else
+                            release.Title += " " + titleElements[5] + " " + titleElements[3] + " " + titleElements[1] + " " +
+                                             titleElements[2] + " " + titleElements[4] + " " + string.Join(
+                                                 " ", titleElements.Skip(6));
+
+                        if (Regex.IsMatch(release.Description, "([Dd]ual(.{1}?)[AaÁá]udio|[Nn]acional|[Dd]ublado)"))
+                            release.Title += " / Brazilian";
+
                         // This tracker does not provide an publish date to search terms (only on last 24h page)
                         release.PublishDate = DateTime.Today;
 
                         // check for previously stripped search terms
                         if (!query.IsImdbQuery && !query.MatchQueryStringAND(release.Title, null, searchTerm))
                             continue;
-
                         var size = qSize.TextContent;
                         release.Size = ReleaseInfo.GetBytes(size);
                         release.Link = new Uri(SiteLink + qDlLink.GetAttribute("href"));
